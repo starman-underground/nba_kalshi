@@ -1,3 +1,4 @@
+# src/cli/main.py
 from pathlib import Path
 from typing import Annotated
 import typer, logging
@@ -10,7 +11,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-app = typer.Typer()
+app = typer.Typer(no_args_is_help=True)
 
 @app.command("process-markets")
 def process_markets():
