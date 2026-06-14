@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.5",
+    "arcticdb>=6.7.0",
     "httpx>=0.28.1",
     "jupyterlab>=4.5.7",
     "kalshi-python>=2.1.4",
