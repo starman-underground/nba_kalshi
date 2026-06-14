@@ -1,0 +1,33 @@
+[project]
+name = "nba-kalshi"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.5",
+    "httpx>=0.28.1",
+    "jupyterlab>=4.5.7",
+    "kalshi-python>=2.1.4",
+    "lightgbm>=4.6.0",
+    "matplotlib>=3.10.9",
+    "nba-api>=1.11.4",
+    "numpy>=2.4.6",
+    "pandas>=3.0.3",
+    "plotly>=6.7.0",
+    "polars>=1.41.1",
+    "pyarrow>=24.0.0",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
+    "torch>=2.12.0",
+    "typer>=0.26.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.14",
+]
+
+[project.scripts]
+nba-kalshi = "cli.main:app"
