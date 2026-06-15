@@ -3,6 +3,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+DATABASE_URI = f"lmdb:///{PROJECT_ROOT / 'data'}"
+MARKET_METADATA_LIBRARY = "market_metadata"
+
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,

@@ -1,4 +1,3 @@
-import json
 import logging
 import re
 import threading
@@ -9,7 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 
-from config import PROJECT_ROOT
+from config import MARKET_METADATA_LIBRARY
+from db import ArcticStore
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +20,9 @@ class MarketMetadataLoader:
     NBA_RE = re.compile(r"\bNBA\b")
     DEFAULT_MAX_WORKERS = 8
 
-    def __init__(self, max_workers: int = DEFAULT_MAX_WORKERS):
-        self.metadata_dir = PROJECT_ROOT / "data" / "raw" / "market_metadata"
-        self.metadata_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, max_workers: int = DEFAULT_MAX_WORKERS, store: Optional[ArcticStore] = None):
         self.max_workers = max_workers
+        self.store = store or ArcticStore()
         self._local = threading.local()
 
     @property
@@ -144,22 +143,57 @@ class MarketMetadataLoader:
         logger.info(f"Found {len(nba_series)} NBA series")
         return self._pull_nba_markets(nba_series)
 
+    def _write_markets_to_store(self, markets: List[Dict[str, Any]]) -> None:
+        df = pd.DataFrame(markets)
+        if df.empty:
+            logger.warning("No markets to write")
+            return
+
+        if "series_ticker" in df.columns:
+            series_key = df["series_ticker"].fillna(
+                df["event_ticker"].str.split("-").str[0]
+            )
+        else:
+            series_key = df["event_ticker"].str.split("-").str[0]
+
+        for series_ticker, series_df in df.groupby(series_key, sort=True):
+            series_df = series_df.drop_duplicates(subset="ticker", keep="last")
+            self.store.write(
+                MARKET_METADATA_LIBRARY,
+                series_ticker,
+                series_df,
+                index_col="ticker",
+            )
+            logger.info(f"Wrote {len(series_df)} markets to {series_ticker}")
+
+    def read_market_metadata(
+        self,
+        series_ticker: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Read market metadata from ArcticDB, optionally filtered to one series."""
+        if series_ticker:
+            return self.store.read(MARKET_METADATA_LIBRARY, series_ticker)
+
+        frames = [
+            self.store.read(MARKET_METADATA_LIBRARY, symbol)
+            for symbol in self.store.list_symbols(MARKET_METADATA_LIBRARY)
+        ]
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames)
+
     def load_market_metadata(self, series_ticker: Optional[str] = None) -> pd.DataFrame:
         """
-        Load settled NBA market metadata.
+        Load settled NBA market metadata from Kalshi into ArcticDB.
 
         When `series_ticker` is given, fetch only that series; otherwise discover
-        and fetch all NBA series concurrently.
+        and fetch all NBA series concurrently. Each series is stored as a symbol
+        in the market metadata library, indexed by market ticker.
         """
         if series_ticker:
             markets = self._pull_nba_markets([series_ticker])
-            output_path = self.metadata_dir / f"{series_ticker}.json"
         else:
             markets = self._pull_all_nba_markets()
-            output_path = self.metadata_dir / "nba_markets.json"
 
-        with output_path.open("w") as f:
-            json.dump(markets, f, indent=4)
-        logger.info(f"Wrote {len(markets)} markets to {output_path}")
-
+        self._write_markets_to_store(markets)
         return pd.DataFrame(markets)
