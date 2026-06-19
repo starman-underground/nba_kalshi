@@ -1,14 +1,16 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Callable, Dict, Optional
 
 import polars as pl
 from pydantic import ValidationError
+from sportsdataverse.nba import load_nba_schedule
 
 from config import (
     PREPROCESSED_MARKET_METADATA_LIBRARY,
     RAW_MARKET_METADATA_LIBRARY,
     TICKER_TO_TEAM_MAP,
+    arena_timezone,
 )
 from db import ArcticStore
 from models.game_market_metadata import GameMarketMetadata
@@ -16,6 +18,21 @@ from models.game_market_metadata import GameMarketMetadata
 logger = logging.getLogger(__name__)
 
 SeriesPreprocessor = Callable[[pl.DataFrame], pl.DataFrame]
+
+_MONTHS = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
 
 
 def _parse_iso_datetime(value: str) -> datetime:
@@ -27,6 +44,97 @@ def _team_name(team_code: str) -> str:
         return TICKER_TO_TEAM_MAP[team_code]
     except KeyError as exc:
         raise ValueError(f"Unknown team code {team_code!r}") from exc
+
+
+def _parse_kxnbagame_event_ticker(event_ticker: str) -> tuple[date, frozenset[str]]:
+    suffix = event_ticker.split("-", 1)[1]
+    if len(suffix) < 13:
+        raise ValueError(f"Invalid KXNBAGAME event ticker {event_ticker!r}")
+
+    date_token = suffix[:7]
+    away_code, home_code = suffix[7:10], suffix[10:13]
+    year = 2000 + int(date_token[:2])
+    month = _MONTHS[date_token[2:5]]
+    day = int(date_token[5:7])
+    teams = frozenset(
+        {_team_name(away_code), _team_name(home_code)},
+    )
+    return date(year, month, day), teams
+
+
+def _nba_season_for_date(game_date: date) -> int:
+    return game_date.year + 1 if game_date.month >= 10 else game_date.year
+
+
+def _build_game_schedule_lookup(
+    game_dates: set[date],
+) -> dict[tuple[date, frozenset[str]], tuple[datetime, Optional[str]]]:
+    if not game_dates:
+        return {}
+
+    seasons = sorted({_nba_season_for_date(game_date) for game_date in game_dates})
+    schedule = load_nba_schedule(seasons=seasons)
+    lookup: dict[tuple[date, frozenset[str]], tuple[datetime, str]] = {}
+
+    for row in schedule.iter_rows(named=True):
+        teams = frozenset({row["home_display_name"], row["away_display_name"]})
+        key = (row["game_date"], teams)
+        tip_off_ts = _parse_iso_datetime(row["date"])
+        game_tz = arena_timezone(row["venue_full_name"])
+        if game_tz is None:
+            logger.warning(
+                "No timezone mapping for ESPN venue %r",
+                row["venue_full_name"],
+            )
+        lookup[key] = (tip_off_ts, game_tz)
+
+    return lookup
+
+
+def _enrich_with_tip_off(
+    market_metadata: pl.DataFrame,
+    schedule_lookup: dict[tuple[date, frozenset[str]], tuple[datetime, Optional[str]]],
+) -> pl.DataFrame:
+    tip_off_values: list[Optional[datetime]] = []
+    game_tz_values: list[Optional[str]] = []
+    missing_events: list[str] = []
+
+    for row in market_metadata.iter_rows(named=True):
+        try:
+            game_date, teams = _parse_kxnbagame_event_ticker(row["event_ticker"])
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Could not parse event ticker %s for tip-off enrichment: %s",
+                row.get("event_ticker"),
+                exc,
+            )
+            tip_off_values.append(None)
+            game_tz_values.append(None)
+            continue
+
+        match = schedule_lookup.get((game_date, teams))
+        if match is None:
+            missing_events.append(row["event_ticker"])
+            tip_off_values.append(None)
+            game_tz_values.append(None)
+            continue
+
+        tip_off_ts, game_tz = match
+        tip_off_values.append(tip_off_ts)
+        game_tz_values.append(game_tz)
+
+    if missing_events:
+        unique_missing = sorted(set(missing_events))
+        logger.warning(
+            "No ESPN schedule match for %d KXNBAGAME events (showing up to 5): %s",
+            len(unique_missing),
+            ", ".join(unique_missing[:5]),
+        )
+
+    return market_metadata.with_columns(
+        pl.Series("tip_off_ts", tip_off_values, dtype=pl.Datetime("us", "UTC")),
+        pl.Series("game_tz", game_tz_values),
+    )
 
 
 def _parse_kxnbagame_teams(ticker: str) -> tuple[list[str], str, str]:
@@ -126,7 +234,21 @@ class MarketMetadataPreprocessor:
         if not records:
             return pl.DataFrame()
 
-        return pl.DataFrame(records)
+        preprocessed = pl.DataFrame(records)
+        game_dates: set[date] = set()
+        for event_ticker in preprocessed["event_ticker"].unique().to_list():
+            try:
+                game_date, _ = _parse_kxnbagame_event_ticker(event_ticker)
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Could not parse event ticker %s while loading ESPN schedule: %s",
+                    event_ticker,
+                    exc,
+                )
+                continue
+            game_dates.add(game_date)
+        schedule_lookup = _build_game_schedule_lookup(game_dates)
+        return _enrich_with_tip_off(preprocessed, schedule_lookup)
 
     def preprocess_market_metadata(
         self,

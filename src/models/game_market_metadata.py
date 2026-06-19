@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -18,6 +18,14 @@ class GameMarketMetadata(BaseModel):
     expected_expiration_time: datetime = Field(..., description="The expected expiration time of the market")
     expiration_ts: datetime = Field(..., description="The expiration time of the market")
     teams: List[str] = Field(..., description="The teams of the game")
+    tip_off_ts: Optional[datetime] = Field(
+        None,
+        description="Scheduled tip-off time in UTC from ESPN via sportsdataverse",
+    )
+    game_tz: Optional[str] = Field(
+        None,
+        description="IANA timezone of the game venue from ESPN via sportsdataverse",
+    )
 
     @field_validator("teams")
     @classmethod

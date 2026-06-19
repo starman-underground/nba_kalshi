@@ -1,5 +1,7 @@
 import logging.config
 from pathlib import Path
+from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -30,7 +32,7 @@ LOGGING_CONFIG = {
     }
 }
 
-TICKER_TO_TEAM_MAP = {
+TICKER_TO_TEAM_MAP: Dict[str, str] = {
     "ATL": "Atlanta Hawks",
     "BOS": "Boston Celtics",
     "BKN": "Brooklyn Nets",
@@ -63,6 +65,63 @@ TICKER_TO_TEAM_MAP = {
     "UTA": "Utah Jazz",
     "GUA": "Guangzhou Loong-Lions"
 }
+
+NBA_ARENA_TIMEZONES: Dict[str, ZoneInfo] = {
+    "American Airlines Center": ZoneInfo("America/Chicago"),
+    "Ball Arena": ZoneInfo("America/Denver"),
+    "Barclays Center": ZoneInfo("America/New_York"),
+    "Capital One Arena": ZoneInfo("America/New_York"),
+    "Chase Center": ZoneInfo("America/Los_Angeles"),
+    "Crypto.com Arena": ZoneInfo("America/Los_Angeles"),
+    "Delta Center": ZoneInfo("America/Denver"),
+    "FedExForum": ZoneInfo("America/Chicago"),
+    "Fiserv Forum": ZoneInfo("America/Chicago"),
+    "Footprint Center": ZoneInfo("America/Phoenix"),  # Handles Arizona's no-DST rule
+    "Frost Bank Center": ZoneInfo("America/Chicago"),
+    "Gainbridge Fieldhouse": ZoneInfo("America/New_York"),
+    "Golden 1 Center": ZoneInfo("America/Los_Angeles"),
+    "Intuit Dome": ZoneInfo("America/Los_Angeles"),
+    "Kaseya Center": ZoneInfo("America/New_York"),
+    "Kia Center": ZoneInfo("America/New_York"),
+    "Little Caesars Arena": ZoneInfo("America/New_York"),
+    "Madison Square Garden": ZoneInfo("America/New_York"),
+    "Moda Center": ZoneInfo("America/Los_Angeles"),
+    "Paycom Center": ZoneInfo("America/Chicago"),
+    "Rocket Mortgage FieldHouse": ZoneInfo("America/New_York"),
+    "Scotiabank Arena": ZoneInfo("America/Toronto"),  # Matches Eastern Time rules for Canada
+    "Smoothie King Center": ZoneInfo("America/Chicago"),
+    "Spectrum Center": ZoneInfo("America/New_York"),
+    "State Farm Arena": ZoneInfo("America/New_York"),
+    "Target Center": ZoneInfo("America/Chicago"),
+    "TD Garden": ZoneInfo("America/New_York"),
+    "Toyota Center": ZoneInfo("America/Chicago"),
+    "United Center": ZoneInfo("America/Chicago"),
+    "Wells Fargo Center": ZoneInfo("America/New_York"),
+    "Xfinity Mobile Arena": ZoneInfo("America/New_York"),
+    "Rocket Arena": ZoneInfo("America/New_York"),
+    "crypto.com Arena": ZoneInfo("America/Los_Angeles"),
+    "Toyota Center (Houston)": ZoneInfo("America/Chicago"),
+    "T-Mobile Arena": ZoneInfo("America/Los_Angeles"),
+    "Moody Center": ZoneInfo("America/Chicago"),
+    "Mortgage Matchup Center": ZoneInfo("America/Phoenix"),
+    "Accor Arena": ZoneInfo("Europe/Paris"),
+    "Arena CDMX": ZoneInfo("America/Mexico_City"),
+    "The O2": ZoneInfo("Europe/London"),
+    "Uber Arena": ZoneInfo("Europe/Berlin"),
+}
+
+
+def arena_timezone(venue_name: str) -> Optional[str]:
+    timezone = NBA_ARENA_TIMEZONES.get(venue_name)
+    if timezone is not None:
+        return str(timezone)
+
+    normalized = venue_name.casefold()
+    for name, zone in NBA_ARENA_TIMEZONES.items():
+        if name.casefold() == normalized:
+            return str(zone)
+
+    return None
 
 def setup_logging():
     logging.config.dictConfig(LOGGING_CONFIG)
