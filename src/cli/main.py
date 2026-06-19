@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated, Optional
 from config import setup_logging, PROJECT_ROOT
 import typer, logging
-from ingestion import MarketMetadataLoader
+from ingestion import MarketMetadataLoader, MarketMetadataPreprocessor
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -12,8 +12,17 @@ logger = logging.getLogger(__name__)
 app = typer.Typer(no_args_is_help=True)
 
 @app.command("process-markets")
-def process_markets():
-    logger.info(f"Processing NBA game winner markets...")
+def process_markets(
+    series_ticker: Annotated[
+        str,
+        typer.Option(
+            "--series-ticker",
+            help="The NBA series ticker to preprocess (e.g. KXNBAGAME)",
+        ),
+    ] = MarketMetadataPreprocessor.KXNBAGAME_EVENT_TICKER,
+):
+    logger.info("Preprocessing market metadata for %s...", series_ticker)
+    MarketMetadataPreprocessor().preprocess_and_store(series_ticker)
 
 @app.command("load-markets")
 def load_markets(series_ticker: Annotated[Optional[str], typer.Option("--series-ticker", help="The NBA series ticker to load markets for")] = None, workers: Annotated[int, typer.Option("--workers", help="The number of workers to use for loading markets")] = 8):

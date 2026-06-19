@@ -5,10 +5,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
+import polars as pl
 import requests
 
-from config import MARKET_METADATA_LIBRARY
+from config import RAW_MARKET_METADATA_LIBRARY
 from db import ArcticStore
 
 logger = logging.getLogger(__name__)
@@ -98,6 +98,7 @@ class MarketMetadataLoader:
     def _fetch_series_markets(self, series_ticker: str) -> Tuple[List[dict], List[dict]]:
         live = list(self._markets_for_series(series_ticker))
         historical = list(self._historical_markets_for_series(series_ticker))
+        logger.info(f"Fetched {len(live)} live and {len(historical)} historical markets for {series_ticker}")
         return live, historical
 
     def _merge_markets(
@@ -143,23 +144,42 @@ class MarketMetadataLoader:
         logger.info(f"Found {len(nba_series)} NBA series")
         return self._pull_nba_markets(nba_series)
 
+    def _series_key_expr(self, column_names: list[str]) -> pl.Expr:
+        if "series_ticker" in column_names:
+            return pl.coalesce(
+                [
+                    pl.col("series_ticker"),
+                    pl.col("event_ticker").str.split("-").list.first(),
+                ]
+            )
+        return pl.col("event_ticker").str.split("-").list.first()
+
     def _write_markets_to_store(self, markets: List[Dict[str, Any]]) -> None:
-        df = pd.DataFrame(markets)
-        if df.empty:
+        if not markets:
             logger.warning("No markets to write")
             return
 
-        if "series_ticker" in df.columns:
-            series_key = df["series_ticker"].fillna(
-                df["event_ticker"].str.split("-").str[0]
-            )
-        else:
-            series_key = df["event_ticker"].str.split("-").str[0]
+        lf = pl.LazyFrame(markets)
+        lf = lf.with_columns(
+            self._series_key_expr(lf.collect_schema().names()).alias("_series_key")
+        ).unique(subset=["ticker"], keep="last", maintain_order=True)
 
-        for series_ticker, series_df in df.groupby(series_key, sort=True):
-            series_df = series_df.drop_duplicates(subset="ticker", keep="last")
+        series_tickers = (
+            lf.select("_series_key")
+            .unique()
+            .sort("_series_key")
+            .collect()["_series_key"]
+            .to_list()
+        )
+
+        for series_ticker in series_tickers:
+            series_df = (
+                lf.filter(pl.col("_series_key") == series_ticker)
+                .drop("_series_key")
+                .collect(streaming=True)
+            )
             self.store.write(
-                MARKET_METADATA_LIBRARY,
+                RAW_MARKET_METADATA_LIBRARY,
                 series_ticker,
                 series_df,
                 index_col="ticker",
@@ -169,20 +189,22 @@ class MarketMetadataLoader:
     def read_market_metadata(
         self,
         series_ticker: Optional[str] = None,
-    ) -> pd.DataFrame:
+    ) -> pl.DataFrame:
         """Read market metadata from ArcticDB, optionally filtered to one series."""
         if series_ticker:
-            return self.store.read(MARKET_METADATA_LIBRARY, series_ticker)
+            return self.store.read(RAW_MARKET_METADATA_LIBRARY, series_ticker)
+
+        symbols = self.store.list_symbols(RAW_MARKET_METADATA_LIBRARY)
+        if not symbols:
+            return pl.DataFrame()
 
         frames = [
-            self.store.read(MARKET_METADATA_LIBRARY, symbol)
-            for symbol in self.store.list_symbols(MARKET_METADATA_LIBRARY)
+            self.store.read(RAW_MARKET_METADATA_LIBRARY, symbol).lazy()
+            for symbol in symbols
         ]
-        if not frames:
-            return pd.DataFrame()
-        return pd.concat(frames)
+        return pl.concat(frames).collect(streaming=True)
 
-    def load_market_metadata(self, series_ticker: Optional[str] = None) -> pd.DataFrame:
+    def load_market_metadata(self, series_ticker: Optional[str] = None) -> pl.DataFrame:
         """
         Load settled NBA market metadata from Kalshi into ArcticDB.
 
@@ -196,4 +218,6 @@ class MarketMetadataLoader:
             markets = self._pull_all_nba_markets()
 
         self._write_markets_to_store(markets)
-        return pd.DataFrame(markets)
+        if not markets:
+            return pl.DataFrame()
+        return pl.LazyFrame(markets).collect(streaming=True)

@@ -1,3 +1,3 @@
-from .load_market_metadata import MarketMetadataLoader
+from .market_metadata_loader import MarketMetadataLoader
 
 __all__ = ["MarketMetadataLoader"]
