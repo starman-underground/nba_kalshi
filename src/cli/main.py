@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(no_args_is_help=True)
 
-@app.command("process-markets")
-def process_markets(
+@app.command("preprocess-markets")
+def preprocess_markets(
     series_ticker: Annotated[
         str,
         typer.Option(
@@ -25,7 +25,22 @@ def process_markets(
     MarketMetadataPreprocessor().preprocess_and_store(series_ticker)
 
 @app.command("load-markets")
-def load_markets(series_ticker: Annotated[Optional[str], typer.Option("--series-ticker", help="The NBA series ticker to load markets for")] = None, workers: Annotated[int, typer.Option("--workers", help="The number of workers to use for loading markets")] = 8):
+def load_markets(
+    series_ticker: Annotated[
+        Optional[str],
+        typer.Option(
+            "--series-ticker",
+            help="The NBA series ticker to load markets for",
+        )
+    ] = None,
+    workers: Annotated[
+        int,
+        typer.Option(
+            "--workers",
+            help="The number of workers to use for loading markets",
+        )
+    ] = 8,
+):
     logger.info(f"Loading NBA game winner markets...")
     market_metadata_loader = MarketMetadataLoader(workers)
     market_metadata_loader.load_market_metadata(series_ticker)
