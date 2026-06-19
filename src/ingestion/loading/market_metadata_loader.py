@@ -112,10 +112,11 @@ class MarketMetadataLoader:
         for market in historical:
             by_ticker.setdefault(market["ticker"], market)
 
-    def _pull_nba_markets(self, series_tickers: List[str]) -> List[Dict[str, Any]]:
+    def _pull_nba_markets(self, series_tickers: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Return {series_ticker: [market_dicts]} with live preferred over historical."""
         logger.info(f"Fetching markets for {len(series_tickers)} NBA series")
 
-        by_ticker: Dict[str, dict] = {}
+        markets_by_series: Dict[str, List[Dict[str, Any]]] = {}
         workers = min(self.max_workers, max(1, len(series_tickers)))
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -130,54 +131,28 @@ class MarketMetadataLoader:
                 except Exception:
                     logger.exception(f"Failed fetching markets for series {series_ticker}")
                     raise
+                by_ticker: Dict[str, dict] = {}
                 self._merge_markets(by_ticker, live, historical)
-                logger.debug(
-                    f"{series_ticker}: {len(live)} live, {len(historical)} historical"
-                )
+                markets_by_series[series_ticker] = list(by_ticker.values())
 
-        markets = list(by_ticker.values())
-        logger.info(f"Total unique NBA markets: {len(markets)}")
-        return markets
+        total = sum(len(v) for v in markets_by_series.values())
+        logger.info(f"Total unique NBA markets: {total}")
+        return markets_by_series
 
-    def _pull_all_nba_markets(self) -> List[Dict[str, Any]]:
+    def _pull_all_nba_markets(self) -> Dict[str, List[Dict[str, Any]]]:
         nba_series = self._discover_nba_series()
         logger.info(f"Found {len(nba_series)} NBA series")
         return self._pull_nba_markets(nba_series)
 
-    def _series_key_expr(self, column_names: list[str]) -> pl.Expr:
-        if "series_ticker" in column_names:
-            return pl.coalesce(
-                [
-                    pl.col("series_ticker"),
-                    pl.col("event_ticker").str.split("-").list.first(),
-                ]
-            )
-        return pl.col("event_ticker").str.split("-").list.first()
-
-    def _write_markets_to_store(self, markets: List[Dict[str, Any]]) -> None:
-        if not markets:
+    def _write_markets_to_store(self, markets_by_series: Dict[str, List[Dict[str, Any]]]) -> None:
+        if not markets_by_series:
             logger.warning("No markets to write")
             return
 
-        lf = pl.LazyFrame(markets)
-        lf = lf.with_columns(
-            self._series_key_expr(lf.collect_schema().names()).alias("_series_key")
-        ).unique(subset=["ticker"], keep="last", maintain_order=True)
-
-        series_tickers = (
-            lf.select("_series_key")
-            .unique()
-            .sort("_series_key")
-            .collect()["_series_key"]
-            .to_list()
-        )
-
-        for series_ticker in series_tickers:
-            series_df = (
-                lf.filter(pl.col("_series_key") == series_ticker)
-                .drop("_series_key")
-                .collect(streaming=True)
-            )
+        for series_ticker, markets in sorted(markets_by_series.items()):
+            if not markets:
+                continue
+            series_df = pl.DataFrame(markets)
             self.store.write(
                 RAW_MARKET_METADATA_LIBRARY,
                 series_ticker,
@@ -204,20 +179,17 @@ class MarketMetadataLoader:
         ]
         return pl.concat(frames).collect(streaming=True)
 
-    def load_market_metadata(self, series_ticker: Optional[str] = None) -> pl.DataFrame:
+    def load_market_metadata(self, series_ticker: Optional[str] = None) -> None:
         """
         Load settled NBA market metadata from Kalshi into ArcticDB.
 
         When `series_ticker` is given, fetch only that series; otherwise discover
-        and fetch all NBA series concurrently. Each series is stored as a symbol
-        in the market metadata library, indexed by market ticker.
+        and fetch all NBA series concurrently. Each series is stored as its own
+        symbol in the market metadata library, indexed by market ticker.
         """
         if series_ticker:
-            markets = self._pull_nba_markets([series_ticker])
+            markets_by_series = self._pull_nba_markets([series_ticker])
         else:
-            markets = self._pull_all_nba_markets()
+            markets_by_series = self._pull_all_nba_markets()
 
-        self._write_markets_to_store(markets)
-        if not markets:
-            return pl.DataFrame()
-        return pl.LazyFrame(markets).collect(streaming=True)
+        self._write_markets_to_store(markets_by_series)
