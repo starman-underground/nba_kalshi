@@ -18,13 +18,21 @@ class GameMarketMetadata(BaseModel):
     expected_expiration_time: datetime = Field(..., description="The expected expiration time of the market")
     expiration_ts: datetime = Field(..., description="The expiration time of the market")
     teams: List[str] = Field(..., description="The teams of the game")
-    tip_off_ts: Optional[datetime] = Field(
+    tip_off_ts_utc: Optional[datetime] = Field(
         None,
         description="Scheduled tip-off time in UTC from ESPN via sportsdataverse",
+    )
+    tip_off_ts_local: Optional[datetime] = Field(
+        None,
+        description="Scheduled tip-off time in the arena's local timezone (see game_tz)",
     )
     game_tz: Optional[str] = Field(
         None,
         description="IANA timezone of the game venue from ESPN via sportsdataverse",
+    )
+    arena: Optional[str] = Field(
+        None,
+        description="Venue full name from ESPN via sportsdataverse",
     )
 
     @field_validator("teams")

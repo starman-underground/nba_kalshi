@@ -1,6 +1,7 @@
 import logging
 from datetime import date, datetime
 from typing import Callable, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import polars as pl
 from pydantic import ValidationError
@@ -66,37 +67,49 @@ def _nba_season_for_date(game_date: date) -> int:
     return game_date.year + 1 if game_date.month >= 10 else game_date.year
 
 
+def _to_local_tip_off(
+    tip_off_utc: datetime,
+    game_tz: Optional[str],
+) -> Optional[datetime]:
+    if game_tz is None:
+        return None
+    return tip_off_utc.astimezone(ZoneInfo(game_tz)).replace(tzinfo=None)
+
+
 def _build_game_schedule_lookup(
     game_dates: set[date],
-) -> dict[tuple[date, frozenset[str]], tuple[datetime, Optional[str]]]:
+) -> dict[tuple[date, frozenset[str]], tuple[datetime, Optional[str], str]]:
     if not game_dates:
         return {}
 
     seasons = sorted({_nba_season_for_date(game_date) for game_date in game_dates})
     schedule = load_nba_schedule(seasons=seasons)
-    lookup: dict[tuple[date, frozenset[str]], tuple[datetime, str]] = {}
+    lookup: dict[tuple[date, frozenset[str]], tuple[datetime, Optional[str], str]] = {}
 
     for row in schedule.iter_rows(named=True):
         teams = frozenset({row["home_display_name"], row["away_display_name"]})
         key = (row["game_date"], teams)
         tip_off_ts = _parse_iso_datetime(row["date"])
-        game_tz = arena_timezone(row["venue_full_name"])
+        arena = row["venue_full_name"]
+        game_tz = arena_timezone(arena)
         if game_tz is None:
             logger.warning(
                 "No timezone mapping for ESPN venue %r",
-                row["venue_full_name"],
+                arena,
             )
-        lookup[key] = (tip_off_ts, game_tz)
+        lookup[key] = (tip_off_ts, game_tz, arena)
 
     return lookup
 
 
-def _enrich_with_tip_off(
+def _enrich_with_schedule(
     market_metadata: pl.DataFrame,
-    schedule_lookup: dict[tuple[date, frozenset[str]], tuple[datetime, Optional[str]]],
+    schedule_lookup: dict[tuple[date, frozenset[str]], tuple[datetime, Optional[str], str]],
 ) -> pl.DataFrame:
-    tip_off_values: list[Optional[datetime]] = []
+    tip_off_utc_values: list[Optional[datetime]] = []
+    tip_off_local_values: list[Optional[datetime]] = []
     game_tz_values: list[Optional[str]] = []
+    arena_values: list[Optional[str]] = []
     missing_events: list[str] = []
 
     for row in market_metadata.iter_rows(named=True):
@@ -104,24 +117,30 @@ def _enrich_with_tip_off(
             game_date, teams = _parse_kxnbagame_event_ticker(row["event_ticker"])
         except (KeyError, TypeError, ValueError) as exc:
             logger.warning(
-                "Could not parse event ticker %s for tip-off enrichment: %s",
+                "Could not parse event ticker %s for schedule enrichment: %s",
                 row.get("event_ticker"),
                 exc,
             )
-            tip_off_values.append(None)
+            tip_off_utc_values.append(None)
+            tip_off_local_values.append(None)
             game_tz_values.append(None)
+            arena_values.append(None)
             continue
 
         match = schedule_lookup.get((game_date, teams))
         if match is None:
             missing_events.append(row["event_ticker"])
-            tip_off_values.append(None)
+            tip_off_utc_values.append(None)
+            tip_off_local_values.append(None)
             game_tz_values.append(None)
+            arena_values.append(None)
             continue
 
-        tip_off_ts, game_tz = match
-        tip_off_values.append(tip_off_ts)
+        tip_off_utc, game_tz, arena = match
+        tip_off_utc_values.append(tip_off_utc)
+        tip_off_local_values.append(_to_local_tip_off(tip_off_utc, game_tz))
         game_tz_values.append(game_tz)
+        arena_values.append(arena)
 
     if missing_events:
         unique_missing = sorted(set(missing_events))
@@ -132,8 +151,10 @@ def _enrich_with_tip_off(
         )
 
     return market_metadata.with_columns(
-        pl.Series("tip_off_ts", tip_off_values, dtype=pl.Datetime("us", "UTC")),
+        pl.Series("tip_off_ts_utc", tip_off_utc_values, dtype=pl.Datetime("us", "UTC")),
+        pl.Series("tip_off_ts_local", tip_off_local_values, dtype=pl.Datetime("us")),
         pl.Series("game_tz", game_tz_values),
+        pl.Series("arena", arena_values),
     )
 
 
@@ -248,7 +269,7 @@ class MarketMetadataPreprocessor:
                 continue
             game_dates.add(game_date)
         schedule_lookup = _build_game_schedule_lookup(game_dates)
-        return _enrich_with_tip_off(preprocessed, schedule_lookup)
+        return _enrich_with_schedule(preprocessed, schedule_lookup)
 
     def preprocess_market_metadata(
         self,
