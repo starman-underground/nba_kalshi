@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sportsdataverse.nba import load_nba_schedule
 
 from config import (
+    MONTHS,
     PREPROCESSED_MARKET_METADATA_LIBRARY,
     RAW_MARKET_METADATA_LIBRARY,
     TICKER_TO_TEAM_MAP,
@@ -20,21 +21,24 @@ logger = logging.getLogger(__name__)
 
 SeriesPreprocessor = Callable[[pl.DataFrame], pl.DataFrame]
 
-_MONTHS = {
-    "JAN": 1,
-    "FEB": 2,
-    "MAR": 3,
-    "APR": 4,
-    "MAY": 5,
-    "JUN": 6,
-    "JUL": 7,
-    "AUG": 8,
-    "SEP": 9,
-    "OCT": 10,
-    "NOV": 11,
-    "DEC": 12,
+_TIMESTAMP_UNIX_COLUMNS = {
+    "open_ts": "open_ts_unix",
+    "settlement_ts": "settlement_ts_unix",
+    "expected_expiration_time": "expected_expiration_time_unix",
+    "expiration_ts": "expiration_ts_unix",
+    "tip_off_ts_utc": "tip_off_ts_unix",
 }
 
+
+def _add_unix_timestamp_columns(df: pl.DataFrame) -> pl.DataFrame:
+    if df.is_empty():
+        return df
+
+    return df.with_columns(
+        pl.col(ts_col).dt.epoch(time_unit="s").alias(unix_col)
+        for ts_col, unix_col in _TIMESTAMP_UNIX_COLUMNS.items()
+        if ts_col in df.columns
+    )
 
 def _parse_iso_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -55,7 +59,7 @@ def _parse_kxnbagame_event_ticker(event_ticker: str) -> tuple[date, frozenset[st
     date_token = suffix[:7]
     away_code, home_code = suffix[7:10], suffix[10:13]
     year = 2000 + int(date_token[:2])
-    month = _MONTHS[date_token[2:5]]
+    month = MONTHS[date_token[2:5]]
     day = int(date_token[5:7])
     teams = frozenset(
         {_team_name(away_code), _team_name(home_code)},
@@ -277,7 +281,7 @@ class MarketMetadataPreprocessor:
         series_ticker: str,
     ) -> pl.DataFrame:
         preprocessor = self._get_series_preprocessor(series_ticker)
-        return preprocessor(market_metadata)
+        return _add_unix_timestamp_columns(preprocessor(market_metadata))
 
     def preprocess_and_store(self, series_ticker: str) -> pl.DataFrame:
         raw = self.store.read(RAW_MARKET_METADATA_LIBRARY, series_ticker)
