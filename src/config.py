@@ -9,6 +9,11 @@ DATABASE_URI = f"lmdb:///{PROJECT_ROOT / 'data'}"
 RAW_MARKET_METADATA_LIBRARY = "raw_market_metadata"
 PREPROCESSED_MARKET_METADATA_LIBRARY = "preprocessed_market_metadata"
 
+
+def pre_tip_candles_library(series_ticker: str) -> str:
+    """ArcticDB library for one series' pre-tip minute candlesticks (symbol = market ticker)."""
+    return f"pre_tip_candles_{series_ticker.lower()}"
+
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,

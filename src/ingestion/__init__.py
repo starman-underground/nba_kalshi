@@ -1,4 +1,4 @@
-from .loading import MarketMetadataLoader
+from .loading import MarketMetadataLoader, PreTipCandlestickLoader
 from .preprocessing import MarketMetadataPreprocessor
 
-__all__ = ["MarketMetadataLoader", "MarketMetadataPreprocessor"]
+__all__ = ["MarketMetadataLoader", "PreTipCandlestickLoader", "MarketMetadataPreprocessor"]
