@@ -18,7 +18,7 @@ class MarketMetadataLoader:
     BASE_URL = "https://external-api.kalshi.com/trade-api/v2"
     PAGE_LIMIT = 1000
     NBA_RE = re.compile(r"\bNBA\b")
-    DEFAULT_MAX_WORKERS = 8
+    DEFAULT_MAX_WORKERS = 4
 
     def __init__(self, max_workers: int = DEFAULT_MAX_WORKERS, store: Optional[ArcticStore] = None):
         self.max_workers = max_workers

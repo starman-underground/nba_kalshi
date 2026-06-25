@@ -70,7 +70,7 @@ def load_markets(
             "--workers",
             help="The number of workers to use for loading markets",
         )
-    ] = 8,
+    ] = MarketMetadataLoader.DEFAULT_MAX_WORKERS,
 ):
     logger.info(f"Loading NBA game winner markets...")
     market_metadata_loader = MarketMetadataLoader(workers)
