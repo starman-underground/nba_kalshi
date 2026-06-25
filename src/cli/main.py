@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(no_args_is_help=True)
 
-@app.command("preprocess-markets")
-def preprocess_markets(
+@app.command("preprocess-market-metadata")
+def preprocess_market_metadata(
     series_ticker: Annotated[
         str,
         typer.Option(
@@ -55,8 +55,8 @@ def load_pre_tip_candles(
     )
 
 
-@app.command("load-markets")
-def load_markets(
+@app.command("load-market-metadata")
+def load_market_metadata(
     series_ticker: Annotated[
         Optional[str],
         typer.Option(
